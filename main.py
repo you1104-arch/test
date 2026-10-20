@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🎬 일별 박스오피스 & 영화 대시보드")
+st.title("🎬 일별 박스오피스 & 영화 포스터 대시보드")
 
 # 2. 인증키 불러오기 (Streamlit Secrets)
 if "KOBIS_KEY" not in st.secrets:
@@ -51,16 +51,32 @@ def fetch_box_office(key: str, dt: str):
     except requests.exceptions.RequestException as e:
         return None, str(e)
 
-# [수정됨] 이미지 내부에 텍스트를 포함하지 않는 단색 플레이스홀더 이미지 생성
-def get_movie_poster_url(rank: int) -> str:
-    # 랭킹에 따라 배경색을 변경하여 안정적으로 보여지는 영화 포스터 스타일 플레이스홀더 이미지 생성
+# 6. TMDB API를 활용한 실제 영화 포스터 검색 함수
+@st.cache_data(ttl=86400)  # 포스터 이미지 URL은 24시간 동안 캐싱
+def get_movie_poster_url(movie_name: str, rank: int) -> str:
+    # 검색 정확도를 높이기 위한 제목 정제 (예: '극장판 치이카와' -> '치이카와')
+    clean_title = movie_name.replace("극장판", "").strip()
+    
+    try:
+        # TMDB 공개 검색 API 연결
+        tmdb_url = f"https://api.themoviedb.org/3/search/movie?api_key=fba8e1329c298a09fbe30283f518e381&query={requests.utils.quote(clean_title)}&language=ko-KR"
+        res = requests.get(tmdb_url, timeout=5).json()
+        
+        # 검색 결과 중 포스터 경로가 존재하는 경우
+        if res.get("results") and res["results"][0].get("poster_path"):
+            poster_path = res["results"][0]["poster_path"]
+            return f"https://image.tmdb.org/t500{poster_path}"
+    except Exception:
+        pass
+
+    # 포스터를 찾지 못하거나 오류 발생 시 단색 플레이스홀더 이미지 반환
     bg_colors = ["1a365d", "2b6cb0", "2f855a", "742a2a", "4a5568"]
     color = bg_colors[(rank - 1) % len(bg_colors)]
-    return f"https://placehold.co/300x450/{color}/ffffff" # ?text=... 매개변수 제거
+    return f"https://placehold.co/300x450/{color}/ffffff"
 
 data, error_msg = fetch_box_office(api_key, target_dt)
 
-# 6. 에러 및 예외 처리
+# 7. 에러 및 예외 처리
 if error_msg:
     st.error("⚠️ 네트워크 요청에 실패했습니다.")
     st.warning(f"상세 에러 내용: {error_msg}")
@@ -79,7 +95,7 @@ if not daily_list:
     st.info("💡 그날은 아직 집계 전입니다.")
     st.stop()
 
-# 7. 데이터 전처리
+# 8. 데이터 전처리
 df = pd.DataFrame(daily_list)
 
 df["rank"] = df["rank"].astype(int)
@@ -88,7 +104,7 @@ df["audiCnt"] = df["audiCnt"].astype(int)
 df["audiAcc"] = df["audiAcc"].astype(int)
 df["scrnCnt"] = df["scrnCnt"].astype(int)
 
-# 순위 변동 기호
+# 순위 변동 기호 포맷팅
 def format_rank_change(inten: int) -> str:
     if inten > 0:
         return f"🔺 {inten}"
@@ -99,7 +115,7 @@ def format_rank_change(inten: int) -> str:
 
 df["순위변동"] = df["rankInten"].apply(format_rank_change)
 
-# 100만 관객 돌파 표시
+# 100만 관객 돌파 표시 (🏆)
 def add_trophy(row):
     name = row["movieNm"]
     if row["audiAcc"] >= 1_000_000:
@@ -108,7 +124,7 @@ def add_trophy(row):
 
 df["표시_영화명"] = df.apply(add_trophy, axis=1)
 
-# 8. 1위 영화 하이라이트 카드리스트 및 지표
+# 9. 1위 영화 하이라이트 카드리스트 및 지표
 top_movie = df.iloc[0]
 
 st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1위")
@@ -116,12 +132,10 @@ st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1�
 col_left, col_right = st.columns([1, 2])
 
 with col_left:
-    # [수정됨] 1위 이미지는 제목 없이 단색 카드로만 표시
-    top_img_url = get_movie_poster_url(1)
-    st.image(top_img_url, width=250)
+    top_poster_url = get_movie_poster_url(top_movie["movieNm"], 1)
+    st.image(top_poster_url, caption=f"1위: {top_movie['movieNm']}", width=230)
 
 with col_right:
-    # 영화 제목은 여기서 정상 표시됨
     st.markdown(f"### **{top_movie['표시_영화명']}**")
     st.caption(f"개봉일: {top_movie['openDt']} | 스크린 수: {top_movie['scrnCnt']:,}개")
     
@@ -140,7 +154,7 @@ with col_right:
 
 st.markdown("---")
 
-# 9. TOP 5 영화 포스터 갤러리
+# 10. TOP 5 영화 포스터 갤러리
 st.subheader("🖼️ TOP 5 영화 포스터")
 
 top_5_movies = df.head(5)
@@ -148,23 +162,21 @@ cols = st.columns(5)
 
 for idx, (_, movie) in enumerate(top_5_movies.iterrows()):
     with cols[idx]:
-        # [수정됨] 이미지 내부 텍스트 제거
-        poster_url = get_movie_poster_url(movie["rank"])
-        st.image(poster_url, width=180)
-        # 하단 텍스트는 정상 한글 표시
+        poster_url = get_movie_poster_url(movie["movieNm"], movie["rank"])
+        st.image(poster_url, use_container_width=True)
         st.markdown(f"**{movie['rank']}위. {movie['표시_영화명']}**")
         st.caption(f"관객수: {movie['audiCnt']:,}명")
 
 st.markdown("---")
 
-# 10. 관객수 상위 5개 영화 막대그래프
+# 11. 관객수 상위 5개 영화 막대그래프
 st.subheader("📊 관객수 상위 5개 영화 비교")
 top_5_df = df.head(5)[["표시_영화명", "audiCnt"]].set_index("표시_영화명")
 st.bar_chart(top_5_df, y="audiCnt")
 
 st.markdown("---")
 
-# 11. 전체 박스오피스 순위표 출력
+# 12. 전체 박스오피스 순위표 출력
 st.subheader("📋 전체 박스오피스 순위 (1위 ~ 10위)")
 
 display_df = df[["rank", "순위변동", "표시_영화명", "openDt", "audiCnt", "audiAcc", "scrnCnt"]].copy()
