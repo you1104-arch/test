@@ -51,28 +51,36 @@ def fetch_box_office(key: str, dt: str):
     except requests.exceptions.RequestException as e:
         return None, str(e)
 
-# 6. TMDB API를 활용한 실제 영화 포스터 검색 함수
-@st.cache_data(ttl=86400)  # 포스터 이미지 URL은 24시간 동안 캐싱
-def get_movie_poster_url(movie_name: str, rank: int) -> str:
-    # 검색 정확도를 높이기 위한 제목 정제 (예: '극장판 치이카와' -> '치이카와')
-    clean_title = movie_name.replace("극장판", "").strip()
+# 6. 영화 포스터 검색 함수 (TMDB API & Wikipedia 다중 자동 검색)
+@st.cache_data(ttl=86400)
+def get_movie_poster_url(movie_name: str) -> str:
+    # 검색 정확도를 높이기 위한 영화 제목 정제
+    clean_title = movie_name.split("(")[0].strip()  # 부제나 괄호 제거
     
+    # 1차 시도: TMDB 오픈 API
     try:
-        # TMDB 공개 검색 API 연결
-        tmdb_url = f"https://api.themoviedb.org/3/search/movie?api_key=fba8e1329c298a09fbe30283f518e381&query={requests.utils.quote(clean_title)}&language=ko-KR"
-        res = requests.get(tmdb_url, timeout=5).json()
+        tmdb_key = "15d2370007f701e323f63d2ac2a9323d"  # 무료 공개 TMDB Key
+        search_url = f"https://api.themoviedb.org/3/search/movie?api_key={tmdb_key}&query={requests.utils.quote(clean_title)}&language=ko-KR"
+        res = requests.get(search_url, timeout=3).json()
         
-        # 검색 결과 중 포스터 경로가 존재하는 경우
-        if res.get("results") and res["results"][0].get("poster_path"):
-            poster_path = res["results"][0]["poster_path"]
-            return f"https://image.tmdb.org/t500{poster_path}"
+        if res.get("results") and len(res["results"]) > 0:
+            poster_path = res["results"][0].get("poster_path")
+            if poster_path:
+                return f"https://image.tmdb.org/t500{poster_path}"
     except Exception:
         pass
 
-    # 포스터를 찾지 못하거나 오류 발생 시 단색 플레이스홀더 이미지 반환
-    bg_colors = ["1a365d", "2b6cb0", "2f855a", "742a2a", "4a5568"]
-    color = bg_colors[(rank - 1) % len(bg_colors)]
-    return f"https://placehold.co/300x450/{color}/ffffff"
+    # 2차 시도: 위키백과(Wikipedia) 이미지 API
+    try:
+        wiki_url = f"https://ko.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(clean_title)}"
+        res = requests.get(wiki_url, timeout=3).json()
+        if "thumbnail" in res and "source" in res["thumbnail"]:
+            return res["thumbnail"]["source"]
+    except Exception:
+        pass
+
+    # 포스터를 못 찾은 경우 기본 영화 아이콘 포스터 카드 대체
+    return "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500&auto=format&fit=crop&q=60"
 
 data, error_msg = fetch_box_office(api_key, target_dt)
 
@@ -104,7 +112,7 @@ df["audiCnt"] = df["audiCnt"].astype(int)
 df["audiAcc"] = df["audiAcc"].astype(int)
 df["scrnCnt"] = df["scrnCnt"].astype(int)
 
-# 순위 변동 기호 포맷팅
+# 순위 변동 기호
 def format_rank_change(inten: int) -> str:
     if inten > 0:
         return f"🔺 {inten}"
@@ -132,7 +140,7 @@ st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1�
 col_left, col_right = st.columns([1, 2])
 
 with col_left:
-    top_poster_url = get_movie_poster_url(top_movie["movieNm"], 1)
+    top_poster_url = get_movie_poster_url(top_movie["movieNm"])
     st.image(top_poster_url, caption=f"1위: {top_movie['movieNm']}", width=230)
 
 with col_right:
@@ -162,7 +170,7 @@ cols = st.columns(5)
 
 for idx, (_, movie) in enumerate(top_5_movies.iterrows()):
     with cols[idx]:
-        poster_url = get_movie_poster_url(movie["movieNm"], movie["rank"])
+        poster_url = get_movie_poster_url(movie["movieNm"])
         st.image(poster_url, use_container_width=True)
         st.markdown(f"**{movie['rank']}위. {movie['표시_영화명']}**")
         st.caption(f"관객수: {movie['audiCnt']:,}명")
