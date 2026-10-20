@@ -2,6 +2,7 @@ import datetime
 import requests
 import pandas as pd
 import pytz
+import urllib.parse
 import streamlit as st
 
 # 1. 페이지 기본 설정
@@ -51,36 +52,42 @@ def fetch_box_office(key: str, dt: str):
     except requests.exceptions.RequestException as e:
         return None, str(e)
 
-# 6. 영화 포스터 검색 함수 (TMDB API & Wikipedia 다중 자동 검색)
-@st.cache_data(ttl=86400)
-def get_movie_poster_url(movie_name: str) -> str:
-    # 검색 정확도를 높이기 위한 영화 제목 정제
-    clean_title = movie_name.split("(")[0].strip()  # 부제나 괄호 제거
+# 6. 영화별 동적 포스터 카드 생성 함수 (SVG 기반, 한글 100% 지원 & 중복 방지)
+def render_movie_card(rank: int, movie_name: str, audience: int):
+    colors = [
+        ("#1A202C", "#2D3748"),  # 1위: 다크 슬레이트
+        ("#1E3A8A", "#3B82F6"),  # 2위: 블루
+        ("#065F46", "#10B981"),  # 3위: 에메랄드
+        ("#831843", "#EC4899"),  # 4위: 핑크/로즈
+        ("#312E81", "#6366F1"),  # 5위: 인디고
+    ]
+    bg_start, bg_end = colors[(rank - 1) % len(colors)]
     
-    # 1차 시도: TMDB 오픈 API
-    try:
-        tmdb_key = "15d2370007f701e323f63d2ac2a9323d"  # 무료 공개 TMDB Key
-        search_url = f"https://api.themoviedb.org/3/search/movie?api_key={tmdb_key}&query={requests.utils.quote(clean_title)}&language=ko-KR"
-        res = requests.get(search_url, timeout=3).json()
-        
-        if res.get("results") and len(res["results"]) > 0:
-            poster_path = res["results"][0].get("poster_path")
-            if poster_path:
-                return f"https://image.tmdb.org/t500{poster_path}"
-    except Exception:
-        pass
-
-    # 2차 시도: 위키백과(Wikipedia) 이미지 API
-    try:
-        wiki_url = f"https://ko.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(clean_title)}"
-        res = requests.get(wiki_url, timeout=3).json()
-        if "thumbnail" in res and "source" in res["thumbnail"]:
-            return res["thumbnail"]["source"]
-    except Exception:
-        pass
-
-    # 포스터를 못 찾은 경우 기본 영화 아이콘 포스터 카드 대체
-    return "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=500&auto=format&fit=crop&q=60"
+    # SVG 코드로 영화 제목과 순위가 디자인된 카드 생성
+    svg_code = f"""
+    <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="320" viewBox="0 0 200 300">
+        <defs>
+            <linearGradient id="grad{rank}" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:{bg_start};stop-opacity:1" />
+                <stop offset="100%" style="stop-color:{bg_end};stop-opacity:1" />
+            </linearGradient>
+        </defs>
+        <rect width="200" height="300" rx="12" fill="url(#grad{rank})" />
+        <circle cx="35" cy="35" r="20" fill="rgba(255, 255, 255, 0.2)" />
+        <text x="35" y="42" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#FFFFFF" text-anchor="middle">{rank}</text>
+        <text x="100" y="140" font-family="'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" text-anchor="middle">
+            <tspan x="100" dy="0">{movie_name[:10]}</tspan>
+            <tspan x="100" dy="20">{movie_name[10:20]}</tspan>
+        </text>
+        <rect x="20" y="230" width="160" height="1" fill="rgba(255,255,255,0.3)" />
+        <text x="100" y="255" font-family="Arial, sans-serif" font-size="11" fill="rgba(255,255,255,0.8)" text-anchor="middle">관객수</text>
+        <text x="100" y="275" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#FFD700" text-anchor="middle">{audience:,}명</text>
+    </svg>
+    """
+    
+    # Data URI 방식으로 SVG 이미지 전달
+    encoded_svg = urllib.parse.quote(svg_code)
+    return f"data:image/svg+xml;utf8,{encoded_svg}"
 
 data, error_msg = fetch_box_office(api_key, target_dt)
 
@@ -132,7 +139,7 @@ def add_trophy(row):
 
 df["표시_영화명"] = df.apply(add_trophy, axis=1)
 
-# 9. 1위 영화 하이라이트 카드리스트 및 지표
+# 9. 1위 영화 하이라이트
 top_movie = df.iloc[0]
 
 st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1위")
@@ -140,8 +147,8 @@ st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1�
 col_left, col_right = st.columns([1, 2])
 
 with col_left:
-    top_poster_url = get_movie_poster_url(top_movie["movieNm"])
-    st.image(top_poster_url, caption=f"1위: {top_movie['movieNm']}", width=230)
+    top_card_svg = render_movie_card(1, top_movie["movieNm"], top_movie["audiCnt"])
+    st.image(top_card_svg, use_container_width=True)
 
 with col_right:
     st.markdown(f"### **{top_movie['표시_영화명']}**")
@@ -163,17 +170,16 @@ with col_right:
 st.markdown("---")
 
 # 10. TOP 5 영화 포스터 갤러리
-st.subheader("🖼️ TOP 5 영화 포스터")
+st.subheader("🖼️ TOP 5 영화 포스터 카드")
 
 top_5_movies = df.head(5)
 cols = st.columns(5)
 
 for idx, (_, movie) in enumerate(top_5_movies.iterrows()):
     with cols[idx]:
-        poster_url = get_movie_poster_url(movie["movieNm"])
-        st.image(poster_url, use_container_width=True)
+        card_svg = render_movie_card(movie["rank"], movie["movieNm"], movie["audiCnt"])
+        st.image(card_svg, use_container_width=True)
         st.markdown(f"**{movie['rank']}위. {movie['표시_영화명']}**")
-        st.caption(f"관객수: {movie['audiCnt']:,}명")
 
 st.markdown("---")
 
