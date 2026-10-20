@@ -6,12 +6,12 @@ import streamlit as st
 
 # 1. 페이지 기본 설정
 st.set_page_config(
-    page_title="일별 박스오피스 조회",
+    page_title="일별 박스오피스 & 영화 포스터 대시보드",
     page_icon="🎬",
     layout="wide"
 )
 
-st.title("🎬 일별 박스오피스")
+st.title("🎬 일별 박스오피스 & 영화 포스터 대시보드")
 
 # 2. 인증키 불러오기 (Streamlit Secrets)
 if "KOBIS_KEY" not in st.secrets:
@@ -25,22 +25,22 @@ if "KOBIS_KEY" not in st.secrets:
 
 api_key = st.secrets["KOBIS_KEY"]
 
-# 3. 한국 시간(KST) 기준으로 선택 가능 날짜 범위 설정
+# 3. 한국 시간(KST) 기준 날짜 설정
 kst = pytz.timezone("Asia/Seoul")
 now_kst = datetime.datetime.now(kst).date()
-max_allowed_date = now_kst - datetime.timedelta(days=1)  # 선택 가능한 최대 날짜는 '어제'
+max_allowed_date = now_kst - datetime.timedelta(days=1)  # 최대 날짜: 어제
 
-# 4. 달력(st.date_input)으로 조회 날짜 선택
+# 4. 조회 날짜 선택 달력
 selected_date = st.date_input(
-    label="📅 조회할 날짜를 선택하세요 (최대 어제까지 선택 가능)",
+    label="📅 조회할 날짜를 선택하세요 (최대 어제까지 가능)",
     value=max_allowed_date,
     max_value=max_allowed_date,
-    min_value=datetime.date(2003, 11, 11)  # KOBIS 데이터 제공 시작일
+    min_value=datetime.date(2003, 11, 11)
 )
 
-target_dt = selected_date.strftime("%Y%m%d")  # YYYYMMDD 변환
+target_dt = selected_date.strftime("%Y%m%d")
 
-# 5. KOBIS API 데이터 요청 함수
+# 5. KOBIS API 박스오피스 데이터 요청 함수
 @st.cache_data(ttl=3600)
 def fetch_box_office(key: str, dt: str):
     url = f"https://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={key}&targetDt={dt}"
@@ -57,24 +57,17 @@ data, error_msg = fetch_box_office(api_key, target_dt)
 if error_msg:
     st.error("⚠️ 네트워크 요청에 실패했습니다.")
     st.warning(f"상세 에러 내용: {error_msg}")
-    st.info("💡 인터넷 연결 상태를 확인하거나 API 서비스 장애 여부를 검토하세요.")
     st.stop()
 
 if "faultInfo" in data:
     fault_msg = data["faultInfo"].get("message", "알 수 없는 에러")
     st.error("⚠️ API 호출 중 오류(faultInfo)가 발생했습니다.")
     st.warning(f"오류 메시지: {fault_msg}")
-    st.info("""
-    💡 **확인사항:**
-    - 등록된 `KOBIS_KEY`가 올바른지 확인하세요.
-    - 영화진흥위원회 오픈API 포털에서 인증키의 일일 요청 제한 초과 여부를 확인하세요.
-    """)
     st.stop()
 
 box_office_result = data.get("boxOfficeResult", {})
 daily_list = box_office_result.get("dailyBoxOfficeList", [])
 
-# 선택한 날짜에 영화 목록이 없는 경우 문구 출력
 if not daily_list:
     st.info("💡 그날은 아직 집계 전입니다.")
     st.stop()
@@ -82,25 +75,24 @@ if not daily_list:
 # 7. 데이터 전처리
 df = pd.DataFrame(daily_list)
 
-# 숫자 데이터 형변환
 df["rank"] = df["rank"].astype(int)
 df["rankInten"] = df["rankInten"].astype(int)
 df["audiCnt"] = df["audiCnt"].astype(int)
 df["audiAcc"] = df["audiAcc"].astype(int)
 df["scrnCnt"] = df["scrnCnt"].astype(int)
 
-# 8. 전일 대비 순위 변동 기호(화살표) 생성 함수
+# 순위 변동 기호 포맷팅
 def format_rank_change(inten: int) -> str:
     if inten > 0:
-        return f"🔺 {inten}"  # 빨간 위 화살표
+        return f"🔺 {inten}"
     elif inten < 0:
-        return f"🔹 {abs(inten)}"  # 파란 아래 화살표
+        return f"🔹 {abs(inten)}"
     else:
-        return "-"  # 유지
+        return "-"
 
 df["순위변동"] = df["rankInten"].apply(format_rank_change)
 
-# 9. 누적 관객 100만 명 이상 영화명에 트로피 이모지(🏆) 추가
+# 100만 관객 돌파 표시
 def add_trophy(row):
     name = row["movieNm"]
     if row["audiAcc"] >= 1_000_000:
@@ -109,42 +101,65 @@ def add_trophy(row):
 
 df["표시_영화명"] = df.apply(add_trophy, axis=1)
 
-# 10. 1위 영화 핵심 지표 카드 (st.metric) 출력
+# 8. 상단 1위 영화 하이라이트 카드리스트 및 지표
 top_movie = df.iloc[0]
 
-st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} 1위 영화")
-col1, col2, col3 = st.columns(3)
+st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1위")
 
-with col1:
-    st.metric(
-        label="🎬 영화명",
-        value=top_movie["표시_영화명"]
+col_left, col_right = st.columns([1, 2])
+
+with col_left:
+    # 1위 영화 기본 비주얼 카드
+    st.image(
+        f"https://source.unsplash.com/featured/?cinema,movie,{top_movie['movieNm']}", 
+        caption=f"1위 영화: {top_movie['movieNm']}", 
+        use_container_width=True
     )
 
-with col2:
-    st.metric(
-        label="🍿 관객수",
-        value=f"{top_movie['audiCnt']:,} 명",
-        delta=f"전일 대비 {top_movie['순위변동']}" if top_movie["rankInten"] != 0 else "순위 유지"
-    )
-
-with col3:
-    st.metric(
-        label="👥 누적 관객수",
-        value=f"{top_movie['audiAcc']:,} 명"
-    )
+with col_right:
+    st.markdown(f"### **{top_movie['표시_영화명']}**")
+    st.caption(f"개봉일: {top_movie['openDt']} | 스크린 수: {top_movie['scrnCnt']:,}개")
+    
+    m_col1, m_col2 = st.columns(2)
+    with m_col1:
+        st.metric(
+            label="🍿 당일 관객수",
+            value=f"{top_movie['audiCnt']:,} 명",
+            delta=f"전일 대비 {top_movie['순위변동']}" if top_movie["rankInten"] != 0 else "순위 유지"
+        )
+    with m_col2:
+        st.metric(
+            label="👥 누적 관객수",
+            value=f"{top_movie['audiAcc']:,} 명"
+        )
 
 st.markdown("---")
 
-# 11. 관객수 상위 5개 영화 막대그래프
-st.subheader("📊 관객수 상위 5개 영화")
+# 9. TOP 5 영화 포스터 갤러리 (카드 형태)
+st.subheader("🖼️ TOP 5 영화 갤러리")
+
+top_5_movies = df.head(5)
+cols = st.columns(5)
+
+for idx, (_, movie) in enumerate(top_5_movies.iterrows()):
+    with cols[idx]:
+        # 영화 이름을 키워드로 관련 포스터/영화 이미지 동적 불러오기
+        img_url = f"https://source.unsplash.com/featured/300x450/?movie,poster,{movie['movieNm']}"
+        st.image(img_url, use_container_width=True)
+        st.markdown(f"**{movie['rank']}위. {movie['표시_영화명']}**")
+        st.caption(f"관객수: {movie['audiCnt']:,}명")
+
+st.markdown("---")
+
+# 10. 관객수 상위 5개 영화 막대그래프
+st.subheader("📊 관객수 상위 5개 영화 비교")
 top_5_df = df.head(5)[["표시_영화명", "audiCnt"]].set_index("표시_영화명")
 st.bar_chart(top_5_df, y="audiCnt")
 
 st.markdown("---")
 
-# 12. 전체 박스오피스 순위표 출력
-st.subheader("📋 박스오피스 순위")
+# 11. 전체 박스오피스 순위표 출력
+st.subheader("📋 전체 박스오피스 순위 (1위 ~ 10위)")
 
 display_df = df[["rank", "순위변동", "표시_영화명", "openDt", "audiCnt", "audiAcc", "scrnCnt"]].copy()
 display_df.columns = ["순위", "전일대비", "영화명", "개봉일", "당일 관객수", "누적 관객수", "스크린수"]
