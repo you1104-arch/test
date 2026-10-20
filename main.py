@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🎬 일별 박스오피스 & 영화 포스터 대시보드")
+st.title("🎬 일별 박스오피스 & 영화 대시보드")
 
 # 2. 인증키 불러오기 (Streamlit Secrets)
 if "KOBIS_KEY" not in st.secrets:
@@ -28,9 +28,9 @@ api_key = st.secrets["KOBIS_KEY"]
 # 3. 한국 시간(KST) 기준 날짜 설정
 kst = pytz.timezone("Asia/Seoul")
 now_kst = datetime.datetime.now(kst).date()
-max_allowed_date = now_kst - datetime.timedelta(days=1)  # 최대 날짜: 어제
+max_allowed_date = now_kst - datetime.timedelta(days=1)  # 선택 가능한 최대 날짜: 어제
 
-# 4. 조회 날짜 선택 달력
+# 4. 달력(st.date_input)으로 조회 날짜 선택
 selected_date = st.date_input(
     label="📅 조회할 날짜를 선택하세요 (최대 어제까지 가능)",
     value=max_allowed_date,
@@ -40,7 +40,7 @@ selected_date = st.date_input(
 
 target_dt = selected_date.strftime("%Y%m%d")
 
-# 5. KOBIS API 박스오피스 데이터 요청 함수
+# 5. KOBIS API 데이터 요청 함수
 @st.cache_data(ttl=3600)
 def fetch_box_office(key: str, dt: str):
     url = f"https://www.kobis.or.kr/kobisopenapi/webservice/rest/boxoffice/searchDailyBoxOfficeList.json?key={key}&targetDt={dt}"
@@ -50,6 +50,14 @@ def fetch_box_office(key: str, dt: str):
         return response.json(), None
     except requests.exceptions.RequestException as e:
         return None, str(e)
+
+# 안전하게 안정적인 영화 포스터 이미지 URL을 생성하는 헬퍼 함수
+def get_movie_poster_url(movie_name: str, rank: int) -> str:
+    # 안정적으로 보여지는 영화 포스터 스타일 플레이스홀더 이미지 생성
+    clean_title = requests.utils.quote(movie_name)
+    bg_colors = ["1a365d", "2b6cb0", "2f855a", "742a2a", "4a5568"]
+    color = bg_colors[(rank - 1) % len(bg_colors)]
+    return f"https://placehold.co/300x450/{color}/ffffff?text={clean_title}"
 
 data, error_msg = fetch_box_office(api_key, target_dt)
 
@@ -81,7 +89,7 @@ df["audiCnt"] = df["audiCnt"].astype(int)
 df["audiAcc"] = df["audiAcc"].astype(int)
 df["scrnCnt"] = df["scrnCnt"].astype(int)
 
-# 순위 변동 기호 포맷팅
+# 순위 변동 기호
 def format_rank_change(inten: int) -> str:
     if inten > 0:
         return f"🔺 {inten}"
@@ -101,7 +109,7 @@ def add_trophy(row):
 
 df["표시_영화명"] = df.apply(add_trophy, axis=1)
 
-# 8. 상단 1위 영화 하이라이트 카드리스트 및 지표
+# 8. 1위 영화 하이라이트 카드리스트 및 지표
 top_movie = df.iloc[0]
 
 st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1위")
@@ -109,12 +117,8 @@ st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1�
 col_left, col_right = st.columns([1, 2])
 
 with col_left:
-    # 1위 영화 기본 비주얼 카드
-    st.image(
-        f"https://source.unsplash.com/featured/?cinema,movie,{top_movie['movieNm']}", 
-        caption=f"1위 영화: {top_movie['movieNm']}", 
-        use_container_width=True
-    )
+    top_img_url = get_movie_poster_url(top_movie["movieNm"], 1)
+    st.image(top_img_url, caption=f"1위 영화: {top_movie['movieNm']}", width=250)
 
 with col_right:
     st.markdown(f"### **{top_movie['표시_영화명']}**")
@@ -135,17 +139,16 @@ with col_right:
 
 st.markdown("---")
 
-# 9. TOP 5 영화 포스터 갤러리 (카드 형태)
-st.subheader("🖼️ TOP 5 영화 갤러리")
+# 9. TOP 5 영화 포스터 갤러리
+st.subheader("🖼️ TOP 5 영화 포스터")
 
 top_5_movies = df.head(5)
 cols = st.columns(5)
 
 for idx, (_, movie) in enumerate(top_5_movies.iterrows()):
     with cols[idx]:
-        # 영화 이름을 키워드로 관련 포스터/영화 이미지 동적 불러오기
-        img_url = f"https://source.unsplash.com/featured/300x450/?movie,poster,{movie['movieNm']}"
-        st.image(img_url, use_container_width=True)
+        poster_url = get_movie_poster_url(movie["movieNm"], movie["rank"])
+        st.image(poster_url, width=180)
         st.markdown(f"**{movie['rank']}위. {movie['표시_영화명']}**")
         st.caption(f"관객수: {movie['audiCnt']:,}명")
 
@@ -167,11 +170,4 @@ display_df.columns = ["순위", "전일대비", "영화명", "개봉일", "당�
 st.dataframe(
     display_df,
     use_container_width=True,
-    hide_index=True,
-    column_config={
-        "순위": st.column_config.NumberColumn("순위", format="%d위"),
-        "당일 관객수": st.column_config.NumberColumn("당일 관객수", format="%d명"),
-        "누적 관객수": st.column_config.NumberColumn("누적 관객수", format="%d명"),
-        "스크린수": st.column_config.NumberColumn("스크린수", format="%d개"),
-    }
-)
+    hide_index
