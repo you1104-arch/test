@@ -2,17 +2,16 @@ import datetime
 import requests
 import pandas as pd
 import pytz
-import urllib.parse
 import streamlit as st
 
 # 1. 페이지 기본 설정
 st.set_page_config(
-    page_title="일별 박스오피스 & 영화 포스터 대시보드",
+    page_title="일별 박스오피스 대시보드",
     page_icon="🎬",
     layout="wide"
 )
 
-st.title("🎬 일별 박스오피스 & 영화 포스터 대시보드")
+st.title("🎬 일별 박스오피스 대시보드")
 
 # 2. 인증키 불러오기 (Streamlit Secrets)
 if "KOBIS_KEY" not in st.secrets:
@@ -52,46 +51,9 @@ def fetch_box_office(key: str, dt: str):
     except requests.exceptions.RequestException as e:
         return None, str(e)
 
-# 6. 영화별 동적 포스터 카드 생성 함수 (SVG 기반, 한글 100% 지원 & 중복 방지)
-def render_movie_card(rank: int, movie_name: str, audience: int):
-    colors = [
-        ("#1A202C", "#2D3748"),  # 1위: 다크 슬레이트
-        ("#1E3A8A", "#3B82F6"),  # 2위: 블루
-        ("#065F46", "#10B981"),  # 3위: 에메랄드
-        ("#831843", "#EC4899"),  # 4위: 핑크/로즈
-        ("#312E81", "#6366F1"),  # 5위: 인디고
-    ]
-    bg_start, bg_end = colors[(rank - 1) % len(colors)]
-    
-    # SVG 코드로 영화 제목과 순위가 디자인된 카드 생성
-    svg_code = f"""
-    <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="320" viewBox="0 0 200 300">
-        <defs>
-            <linearGradient id="grad{rank}" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" style="stop-color:{bg_start};stop-opacity:1" />
-                <stop offset="100%" style="stop-color:{bg_end};stop-opacity:1" />
-            </linearGradient>
-        </defs>
-        <rect width="200" height="300" rx="12" fill="url(#grad{rank})" />
-        <circle cx="35" cy="35" r="20" fill="rgba(255, 255, 255, 0.2)" />
-        <text x="35" y="42" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#FFFFFF" text-anchor="middle">{rank}</text>
-        <text x="100" y="140" font-family="'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" text-anchor="middle">
-            <tspan x="100" dy="0">{movie_name[:10]}</tspan>
-            <tspan x="100" dy="20">{movie_name[10:20]}</tspan>
-        </text>
-        <rect x="20" y="230" width="160" height="1" fill="rgba(255,255,255,0.3)" />
-        <text x="100" y="255" font-family="Arial, sans-serif" font-size="11" fill="rgba(255,255,255,0.8)" text-anchor="middle">관객수</text>
-        <text x="100" y="275" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#FFD700" text-anchor="middle">{audience:,}명</text>
-    </svg>
-    """
-    
-    # Data URI 방식으로 SVG 이미지 전달
-    encoded_svg = urllib.parse.quote(svg_code)
-    return f"data:image/svg+xml;utf8,{encoded_svg}"
-
 data, error_msg = fetch_box_office(api_key, target_dt)
 
-# 7. 에러 및 예외 처리
+# 6. 에러 및 예외 처리
 if error_msg:
     st.error("⚠️ 네트워크 요청에 실패했습니다.")
     st.warning(f"상세 에러 내용: {error_msg}")
@@ -110,7 +72,7 @@ if not daily_list:
     st.info("💡 그날은 아직 집계 전입니다.")
     st.stop()
 
-# 8. 데이터 전처리
+# 7. 데이터 전처리
 df = pd.DataFrame(daily_list)
 
 df["rank"] = df["rank"].astype(int)
@@ -139,58 +101,54 @@ def add_trophy(row):
 
 df["표시_영화명"] = df.apply(add_trophy, axis=1)
 
-# 9. 1위 영화 하이라이트
+# 8. 1위 영화 하이라이트 지표 카드 (st.metric)
 top_movie = df.iloc[0]
 
 st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1위")
 
-col_left, col_right = st.columns([1, 2])
+m_col1, m_col2, m_col3 = st.columns(3)
 
-with col_left:
-    top_card_svg = render_movie_card(1, top_movie["movieNm"], top_movie["audiCnt"])
-    st.image(top_card_svg, use_container_width=True)
+with m_col1:
+    st.metric(
+        label="🎬 1위 영화명",
+        value=top_movie["표시_영화명"]
+    )
 
-with col_right:
-    st.markdown(f"### **{top_movie['표시_영화명']}**")
-    st.caption(f"개봉일: {top_movie['openDt']} | 스크린 수: {top_movie['scrnCnt']:,}개")
-    
-    m_col1, m_col2 = st.columns(2)
-    with m_col1:
-        st.metric(
-            label="🍿 당일 관객수",
-            value=f"{top_movie['audiCnt']:,} 명",
-            delta=f"전일 대비 {top_movie['순위변동']}" if top_movie["rankInten"] != 0 else "순위 유지"
-        )
-    with m_col2:
-        st.metric(
-            label="👥 누적 관객수",
-            value=f"{top_movie['audiAcc']:,} 명"
-        )
+with m_col2:
+    st.metric(
+        label="🍿 당일 관객수",
+        value=f"{top_movie['audiCnt']:,} 명",
+        delta=f"전일 대비 {top_movie['순위변동']}" if top_movie["rankInten"] != 0 else "순위 유지"
+    )
+
+with m_col3:
+    st.metric(
+        label="👥 누적 관객수",
+        value=f"{top_movie['audiAcc']:,} 명"
+    )
 
 st.markdown("---")
 
-# 10. TOP 5 영화 포스터 갤러리
-st.subheader("🖼️ TOP 5 영화 포스터 카드")
+# 9. TOP 5 영화 요약 카드
+st.subheader("⭐ TOP 5 영화 요약")
 
 top_5_movies = df.head(5)
 cols = st.columns(5)
 
 for idx, (_, movie) in enumerate(top_5_movies.iterrows()):
     with cols[idx]:
-        card_svg = render_movie_card(movie["rank"], movie["movieNm"], movie["audiCnt"])
-        st.image(card_svg, use_container_width=True)
-        st.markdown(f"**{movie['rank']}위. {movie['표시_영화명']}**")
+        st.info(f"**{movie['rank']}위. {movie['표시_영화명']}**\n\n- 관객수: {movie['audiCnt']:,}명\n- 개봉일: {movie['openDt']}")
 
 st.markdown("---")
 
-# 11. 관객수 상위 5개 영화 막대그래프
+# 10. 관객수 상위 5개 영화 막대그래프
 st.subheader("📊 관객수 상위 5개 영화 비교")
 top_5_df = df.head(5)[["표시_영화명", "audiCnt"]].set_index("표시_영화명")
 st.bar_chart(top_5_df, y="audiCnt")
 
 st.markdown("---")
 
-# 12. 전체 박스오피스 순위표 출력
+# 11. 전체 박스오피스 순위표 출력
 st.subheader("📋 전체 박스오피스 순위 (1위 ~ 10위)")
 
 display_df = df[["rank", "순위변동", "표시_영화명", "openDt", "audiCnt", "audiAcc", "scrnCnt"]].copy()
