@@ -170,4 +170,11 @@ display_df.columns = ["순위", "전일대비", "영화명", "개봉일", "당�
 st.dataframe(
     display_df,
     use_container_width=True,
-    hide_index
+    hide_index=True,
+    column_config={
+        "순위": st.column_config.NumberColumn("순위", format="%d위"),
+        "당일 관객수": st.column_config.NumberColumn("당일 관객수", format="%d명"),
+        "누적 관객수": st.column_config.NumberColumn("누적 관객수", format="%d명"),
+        "스크린수": st.column_config.NumberColumn("스크린수", format="%d개"),
+    }
+)
