@@ -51,13 +51,12 @@ def fetch_box_office(key: str, dt: str):
     except requests.exceptions.RequestException as e:
         return None, str(e)
 
-# 안전하게 안정적인 영화 포스터 이미지 URL을 생성하는 헬퍼 함수
-def get_movie_poster_url(movie_name: str, rank: int) -> str:
-    # 안정적으로 보여지는 영화 포스터 스타일 플레이스홀더 이미지 생성
-    clean_title = requests.utils.quote(movie_name)
+# [수정됨] 이미지 내부에 텍스트를 포함하지 않는 단색 플레이스홀더 이미지 생성
+def get_movie_poster_url(rank: int) -> str:
+    # 랭킹에 따라 배경색을 변경하여 안정적으로 보여지는 영화 포스터 스타일 플레이스홀더 이미지 생성
     bg_colors = ["1a365d", "2b6cb0", "2f855a", "742a2a", "4a5568"]
     color = bg_colors[(rank - 1) % len(bg_colors)]
-    return f"https://placehold.co/300x450/{color}/ffffff?text={clean_title}"
+    return f"https://placehold.co/300x450/{color}/ffffff" # ?text=... 매개변수 제거
 
 data, error_msg = fetch_box_office(api_key, target_dt)
 
@@ -117,10 +116,12 @@ st.subheader(f"🥇 {selected_date.strftime('%Y년 %m월 %d일')} Box Office 1�
 col_left, col_right = st.columns([1, 2])
 
 with col_left:
-    top_img_url = get_movie_poster_url(top_movie["movieNm"], 1)
-    st.image(top_img_url, caption=f"1위 영화: {top_movie['movieNm']}", width=250)
+    # [수정됨] 1위 이미지는 제목 없이 단색 카드로만 표시
+    top_img_url = get_movie_poster_url(1)
+    st.image(top_img_url, width=250)
 
 with col_right:
+    # 영화 제목은 여기서 정상 표시됨
     st.markdown(f"### **{top_movie['표시_영화명']}**")
     st.caption(f"개봉일: {top_movie['openDt']} | 스크린 수: {top_movie['scrnCnt']:,}개")
     
@@ -147,8 +148,10 @@ cols = st.columns(5)
 
 for idx, (_, movie) in enumerate(top_5_movies.iterrows()):
     with cols[idx]:
-        poster_url = get_movie_poster_url(movie["movieNm"], movie["rank"])
+        # [수정됨] 이미지 내부 텍스트 제거
+        poster_url = get_movie_poster_url(movie["rank"])
         st.image(poster_url, width=180)
+        # 하단 텍스트는 정상 한글 표시
         st.markdown(f"**{movie['rank']}위. {movie['표시_영화명']}**")
         st.caption(f"관객수: {movie['audiCnt']:,}명")
 
